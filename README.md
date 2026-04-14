@@ -67,3 +67,16 @@ monitoring. SeaRay Systems Monitor display panels are no longer available, and
 on my boat, the display no longer functions, thus it no longer is monitoring these
 last few systems.  Reporting status and health of the these signals is the missing
 piece to retiring the old system monitor altogther and removing it from the boat.
+## Local secrets setup
+
+This project expects boat-specific credentials in a local header that is not
+committed to git.
+
+Before the first build:
+
+1. Copy `include/device_config.example.h` to `include/device_config.h`
+2. Edit the values in `include/device_config.h` for your boat
+3. Build the firmware
+
+If `include/device_config.h` is missing, the build will stop with a friendly
+compiler message that explains what to do.

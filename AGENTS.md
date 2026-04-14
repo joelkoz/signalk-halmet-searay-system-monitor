@@ -23,6 +23,22 @@ Important:
 - Do not "normalize" the project back to standard PlatformIO unless explicitly asked.
 - When suggesting build, config, or dependency changes, assume the pioarduino environment is intentional.
 
+## Device-specific configuration
+Boat-specific deployment settings belong in `include/device_config.h`.
+
+Use this file for:
+- secrets and credentials
+- WiFi and Signal K connection defaults
+- device identity such as hostname
+- locale or ship settings such as timezone
+- other per-boat or per-device constants that should not be hard-coded in application source files
+
+Rules:
+- `include/device_config.h` is local and should remain uncommitted
+- `include/device_config.example.h` is the checked-in template
+- whenever a new device-specific configuration variable is introduced, add it to both files
+- prefer reading such values from `device_config.h` rather than duplicating per-boat constants in `main.cpp` or introducing additional local config files unless there is a strong reason
+
 ## Authoritative project references
 Use these sources in this order:
 

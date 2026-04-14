@@ -1,15 +1,24 @@
 #include <Arduino.h>
 
 #include <memory>
+#include <stdlib.h>
+#include <time.h>
 
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
+#if __has_include("device_config.h")
+#include "device_config.h"
+#else
+#error "Missing device_config.h. Copy include/device_config.example.h to include/device_config.h and fill in your local settings before building."
+#endif
+
 #include "Debug.h"
 #include "pumps/bilge_pump_monitor.h"
 #include "sensors/analog_threshold_input.h"
+#include "signalk/signalk_time_sync.h"
 #include "sensesp/sensors/digital_input.h"
 #include "sensesp/signalk/signalk_output.h"
 #include "sensesp/signalk/signalk_ws_client.h"
@@ -29,12 +38,6 @@ using namespace halmet;
 using namespace app;
 
 namespace {
-
-constexpr const char* kDeviceHostname = "sk-monitor";
-constexpr const char* kBoatWifiSsid = "YOUR_BOAT_WIFI_SSID_HERE";
-constexpr const char* kBoatWifiPassword = "YOUR_BOAT_WIFI_PASSWORD_HERE";
-constexpr const char* kSignalKServerHost = "YOUR_SIGNALK_SERVER_HOST_HERE";
-constexpr uint16_t kSignalKServerPort = 80;
 
 constexpr uint8_t kAftBilgePumpChannel = 0;
 constexpr uint8_t kEngineRoomFireDetectorChannel = 1;
@@ -78,6 +81,7 @@ std::shared_ptr<HeartbeatReporter> heartbeat_reporter;
 std::shared_ptr<PersistingObservableValue<float>> pump_state_report_interval_s;
 std::shared_ptr<PersistingObservableValue<float>>
     pump_aggregate_report_interval_s;
+std::shared_ptr<SignalKTimeSync> signalk_time_sync;
 
 DigitalInputState* forward_emergency_input = nullptr;
 DigitalInputState* interior_emergency_input = nullptr;
@@ -116,6 +120,13 @@ String make_notification_payload(const char* state, const String& message,
   String payload;
   serializeJson(root, payload);
   return payload;
+}
+
+void configure_ship_timezone() {
+  setenv("TZ", kShipTimeZonePosix, 1);
+  tzset();
+  LOG_I("Time sync: ship timezone set to %s (%s)", kShipTimeZoneName,
+        kShipTimeZonePosix);
 }
 
 void set_engine_room_fire_notification(bool active) {
@@ -196,6 +207,11 @@ void setup() {
   LOG_I("Signal K: direct server mode enabled host=%s port=%u use_mdns=false",
         kSignalKServerHost, kSignalKServerPort);
 
+  configure_ship_timezone();
+
+  signalk_time_sync = std::make_shared<SignalKTimeSync>();
+  signalk_time_sync->begin();
+
   pump_state_report_interval_s =
       std::make_shared<PersistingObservableValue<float>>(
           kDefaultPumpStateReportIntervalSeconds,
@@ -238,6 +254,12 @@ void setup() {
       BilgePumpKind::kEmergency);
 
   UICounter uiCounter;
+
+  ConfigItem(signalk_time_sync)
+      ->set_title("Signal K Time Sync")
+      ->set_description(
+          "Signal K datetime path and update interval used to set the device wall clock.")
+      ->set_sort_order(uiCounter.nextValue());
 
   ConfigItem(pump_state_report_interval_s)
       ->set_title("Pump State Report Interval (s)")

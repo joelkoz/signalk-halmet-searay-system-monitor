@@ -209,6 +209,13 @@ Specific implementation notes discovered during planning and refactoring:
 - Default Signal K paths for pump-specific values should be derived from the pump role (e.g. `forward` or `forward.emercency`) rather than passed around as many unrelated constants.
 - Shared or reusable SensESP enhancements are preferred over one-off workarounds, but avoid adding runtime-mutable infrastructure unless the requirements specifically need live reconfiguration without reboot.
 
+## Code Documentation Guidance
+
+- New class headers should include concise Doxygen-style comments.
+- At minimum, document each new class with a brief `@brief` description and document public constructors and public methods with parameter and return details when they are not obvious from the signature alone.
+- Private helper methods and important member fields in new class headers should also receive short Doxygen comments when they are part of non-trivial logic or lifecycle behavior.
+- Keep these comments short and practical; they should help future maintainers understand intent and usage without turning the header into prose.
+
 ## Signal K Output Paths
 - All Signal K output paths should have defaults consistent with the Signal K spec
 - All paths should be configurable via the SensESP UI.
