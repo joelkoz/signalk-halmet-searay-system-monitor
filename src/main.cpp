@@ -49,6 +49,9 @@ constexpr unsigned int kDigitalInputReadIntervalMs = 100;
 constexpr unsigned int kAnalogInputReadIntervalMs = 100;
 constexpr unsigned int kPumpStateLogIntervalMs = 2000;
 constexpr unsigned int kNetworkStatusLogIntervalMs = 5000;
+
+// The main loop must tick at least this often or the device reboots. OTA
+// uploads run inside the loop, so the OTA callbacks feed the watchdog too.
 constexpr uint32_t kMainLoopWatchdogTimeoutMs = 15000;
 
 constexpr float kDefaultPumpStateReportIntervalSeconds = 10.0f;
@@ -176,13 +179,13 @@ void setup() {
   Serial.begin(115200);
   debug_setup();
 
-  /////////////////////////////////////////////////////////////////////
-  // Initialize watchdog timer (15 second timeout)
+  // Task watchdog on the main loop: a boat-installed unit should reboot and
+  // recover rather than hang silently if event_loop()->tick() ever stalls.
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = kMainLoopWatchdogTimeoutMs,
       .idle_core_mask = 0,
       .trigger_panic = true};
-  // De-init in case Arduino core already set one up; ignore errors.
+  // De-init in case the Arduino core already set one up; ignore errors.
   esp_task_wdt_deinit();
   esp_err_t wdt_ret = esp_task_wdt_init(&wdt_config);
   if (wdt_ret != ESP_OK) {
@@ -192,7 +195,8 @@ void setup() {
     if (add_ret != ESP_OK) {
       LOG_E("Watchdog add failed: %d", add_ret);
     } else {
-      LOG_I("Watchdog timer initialized with 15 second timeout");
+      LOG_I("Watchdog timer initialized with %lu ms timeout",
+            static_cast<unsigned long>(kMainLoopWatchdogTimeoutMs));
     }
   }
 
