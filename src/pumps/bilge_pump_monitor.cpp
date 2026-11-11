@@ -94,7 +94,8 @@ void BilgePumpMonitor::begin(float state_report_interval_seconds,
   const unsigned long aggregate_interval_ms =
       interval_ms_from_seconds(aggregate_report_interval_seconds);
 
-  running_state_->connect_to(new RepeatMutable<bool>(state_interval_ms))
+  running_repeat_ = new RepeatMutable<bool>(state_interval_ms);
+  running_state_->connect_to(running_repeat_)
       ->connect_to(new sensesp::SKOutputBool(running_sk_path_, "",
                                              make_running_metadata()));
 
@@ -103,34 +104,40 @@ void BilgePumpMonitor::begin(float state_report_interval_seconds,
   last_idle_time_->connect_to(new sensesp::SKOutputFloat(
       last_idle_time_sk_path_, "", make_last_idle_time_metadata()));
 
-  daily_cycle_count_->connect_to(new RepeatMutable<int>(aggregate_interval_ms))
+  daily_cycle_count_repeat_ = new RepeatMutable<int>(aggregate_interval_ms);
+  daily_cycle_count_->connect_to(daily_cycle_count_repeat_)
       ->connect_to(new sensesp::SKOutputInt(
           daily_cycle_count_sk_path_, "", make_daily_cycle_count_metadata()));
 
-  total_cycle_count_->connect_to(new RepeatMutable<int>(aggregate_interval_ms))
+  total_cycle_count_repeat_ = new RepeatMutable<int>(aggregate_interval_ms);
+  total_cycle_count_->connect_to(total_cycle_count_repeat_)
       ->connect_to(new sensesp::SKOutputInt(
           total_cycle_count_sk_path_, "", make_total_cycle_count_metadata()));
 
-  short_cycle_count_->connect_to(new RepeatMutable<int>(aggregate_interval_ms))
+  short_cycle_count_repeat_ = new RepeatMutable<int>(aggregate_interval_ms);
+  short_cycle_count_->connect_to(short_cycle_count_repeat_)
       ->connect_to(new sensesp::SKOutputInt(
           short_cycle_count_sk_path_, "", make_short_cycle_count_metadata()));
 
-  average_run_time_->connect_to(new RepeatMutable<float>(aggregate_interval_ms))
+  average_run_time_repeat_ = new RepeatMutable<float>(aggregate_interval_ms);
+  average_run_time_->connect_to(average_run_time_repeat_)
       ->connect_to(new sensesp::SKOutputFloat(
           average_run_time_sk_path_, "", make_average_run_time_metadata()));
 
-  average_idle_time_->connect_to(new RepeatMutable<float>(aggregate_interval_ms))
+  average_idle_time_repeat_ = new RepeatMutable<float>(aggregate_interval_ms);
+  average_idle_time_->connect_to(average_idle_time_repeat_)
       ->connect_to(new sensesp::SKOutputFloat(
           average_idle_time_sk_path_, "", make_average_idle_time_metadata()));
 
   // Notification paths carry no Signal K metadata. SensESP sends the metadata
   // of every output in one delta on each connect, and with all five pumps the
-  // full set exceeded the websocket send buffer: it was dropped every time,
-  // and building it nearly exhausted the heap on reconnect. Value paths keep
-  // their units and display names; the descriptions were dropped for the same
+  // full set exceeded the websocket send buffer: it was dropped on every
+  // connect, and building it nearly exhausted the heap. Value paths keep their
+  // units and display names; the descriptions were dropped for the same
   // reason.
-  health_notification_->connect_to(
-                         new RepeatMutable<String>(aggregate_interval_ms))
+  health_notification_repeat_ =
+      new RepeatMutable<String>(aggregate_interval_ms);
+  health_notification_->connect_to(health_notification_repeat_)
       ->connect_to(new sensesp::SKOutputRawJson(health_notification_sk_path_,
                                                 ""));
 
@@ -586,22 +593,28 @@ void BilgePumpMonitor::onSKServerConnect() {
     return;
   }
 
-  running_state_->notify();
+  // Outputs behind a RepeatMutable are re-sent through it (see resend()).
+  // They go first: if SensESP's delta queue overflows it drops the oldest
+  // entries, and these come back on their next repeat anyway.
+  running_repeat_->resend(running_state_);
+  daily_cycle_count_repeat_->resend(daily_cycle_count_);
+  total_cycle_count_repeat_->resend(total_cycle_count_);
+  short_cycle_count_repeat_->resend(short_cycle_count_);
+  average_run_time_repeat_->resend(average_run_time_);
+  average_idle_time_repeat_->resend(average_idle_time_);
+  health_notification_repeat_->resend(health_notification_);
+
+  // Outputs with no repeater go last, by notifying their source: last_run_time,
+  // last_idle_time and the incident alerts below.
   last_run_time_->notify();
   last_idle_time_->notify();
-  daily_cycle_count_->notify();
-  total_cycle_count_->notify();
-  short_cycle_count_->notify();
-  average_run_time_->notify();
-  average_idle_time_->notify();
-  health_notification_->notify();
 
-  // Incident alerts are sent only when they change, so re-send the last one
-  // on each channel: an alert raised while disconnected (e.g. during a server
-  // restart) would otherwise never reach Signal K.
+  // Incident alerts are sent only when they change, so re-send each one that
+  // is still active: an alert raised while disconnected (e.g. during a server
+  // restart) would otherwise never reach Signal K. A resolved incident is not
+  // re-sent, so a server restart does not raise its old warning again.
   for (auto& incident_alert : incident_alerts_) {
-    if (incident_alert.notification != nullptr &&
-        !incident_alert.notification->get().isEmpty()) {
+    if (incident_alert.active && incident_alert.notification != nullptr) {
       incident_alert.notification->notify();
     }
   }

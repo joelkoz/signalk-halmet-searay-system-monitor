@@ -38,14 +38,17 @@ Purpose:
 - Ensure long-interval or change-only outputs are refreshed immediately after reconnect
 
 Behavior:
-- Use the websocket connection-state callback pattern from the local example app
-- On each `kSKWSConnected` transition, explicitly `notify()` or otherwise republish the
-  current value of all important Signal K outputs so startup and reconnect do not miss them
+- Use the websocket connection-state callback pattern from the reference project, `signalk-halmet-vacuflush` (one `onSKServerConnect()` per component, called from `main.cpp`)
+- On each `kSKWSConnected` transition, republish the current value of every Signal K output so startup and reconnect do not miss them. An output behind a `RepeatMutable` must be re-sent through the repeater (`RepeatMutable::resend()`): it drops unchanged values, so notifying its source sends nothing.
+- SensESP queues at most 20 outputs between sends (one send every 100 ms) and drops the oldest beyond that, so the connect re-send must not emit more than that at once. The re-send runs in steps, `kResendStepSpacingMs` apart: the device-level outputs first, then one pump per step. Within a step, outputs behind a repeater go first and outputs with no repeater go last, so an overflow drops only values that come back on their next repeat.
 - Outputs that already publish frequently may still be republished on connect; no additional
   code is required to suppress that behavior
 - For this app, this reconnect republish behavior should cover heartbeat, pump states,
   pump health notifications, fire notifications, cycle statistics, last-cycle values,
-  and ignition states
+  ignition states, and incident alerts that are still active
+- A resolved incident alert is not re-sent on reconnect (decided by Joel, 2026-11-11):
+  re-sending its "now resolved" warning would raise it again after every server
+  restart, and a device reboot would drop it anyway
 
 ### 3. Pump Health
 
@@ -192,7 +195,7 @@ The project should prefer standard SensESP producer / transform / consumer patte
 - Driving an output pin from another state should prefer normal SensESP wiring, for example producer -> transform -> `DigitalOutput`.
 - Signal K output classes should generally be consumers connected in `main.cpp` or in a component `begin()` convenience method, rather than being tightly coupled to the internal sensing logic.
 - Metadata should be attached to all custom Signal K paths. Numeric values should specify units. Writable paths should declare `supportsPut` when appropriate.
-- Exception, until SensESP can send metadata in more than one delta: notification paths carry no metadata, and value-path metadata is limited to units and a display name. SensESP sends the metadata of every output in a single delta on each connect; with five pumps the full set (13.9 KB) exceeded the websocket send buffer, so it was always dropped, and building it nearly exhausted the heap on reconnect. Keep the metadata delta well under `SENSESP_SK_WS_BUFFER_SIZE` when adding outputs.
+- Exception, until SensESP can send metadata in more than one delta: notification paths carry no metadata, and value-path metadata is limited to units and a display name. SensESP sends the metadata of every output in a single delta on each connect; with five pumps the full set (13.9 KB) exceeded the websocket send buffer, so it was dropped on every connect, and building it nearly exhausted the heap (the device rebooted with a panic on a reconnect). The first delta after a connect carries the metadata plus up to 20 queued values, so keep metadata + 20 × the largest value payload (a resolved incident alert is about 240 B) well under `SENSESP_SK_WS_BUFFER_SIZE` when adding outputs. The trimmed metadata is about 6.1 KB.
 
 For "complex components" such as the pump monitor components:
 

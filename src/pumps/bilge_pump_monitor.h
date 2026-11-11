@@ -179,6 +179,16 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   sensesp::PersistingObservableValue<int>* health_reference_epoch_ = nullptr;
   sensesp::ObservableValue<String>* health_notification_ = nullptr;
 
+  // Repeaters in front of the change-only outputs. onSKServerConnect() re-sends
+  // through these: notifying the source would not get past an unchanged value.
+  RepeatMutable<bool>* running_repeat_ = nullptr;
+  RepeatMutable<int>* daily_cycle_count_repeat_ = nullptr;
+  RepeatMutable<int>* total_cycle_count_repeat_ = nullptr;
+  RepeatMutable<int>* short_cycle_count_repeat_ = nullptr;
+  RepeatMutable<float>* average_run_time_repeat_ = nullptr;
+  RepeatMutable<float>* average_idle_time_repeat_ = nullptr;
+  RepeatMutable<String>* health_notification_repeat_ = nullptr;
+
   reactesp::RepeatEvent* evaluation_event_ = nullptr;
 };
 

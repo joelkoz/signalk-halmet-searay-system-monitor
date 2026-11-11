@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 
 #include "env_config.h"
@@ -50,6 +51,11 @@ constexpr unsigned int kAnalogInputReadIntervalMs = 100;
 constexpr unsigned int kPumpStateLogIntervalMs = 2000;
 constexpr unsigned int kNetworkStatusLogIntervalMs = 5000;
 
+// SensESP queues at most 20 outputs between sends (one send every 100 ms) and
+// drops the oldest beyond that. A pump re-sends up to 12 outputs on connect,
+// so the connect re-send runs one step at a time, this far apart.
+constexpr unsigned int kResendStepSpacingMs = 250;
+
 // The main loop must tick at least this often or the device reboots. OTA
 // uploads run inside the loop, so the OTA callbacks feed the watchdog too.
 constexpr uint32_t kMainLoopWatchdogTimeoutMs = 15000;
@@ -92,6 +98,9 @@ AnalogThresholdInput* port_ignition_input = nullptr;
 AnalogThresholdInput* starboard_ignition_input = nullptr;
 
 ObservableValue<String>* engine_room_fire_notification = nullptr;
+RepeatMutable<String>* engine_room_fire_repeat = nullptr;
+RepeatMutable<bool>* port_ignition_repeat = nullptr;
+RepeatMutable<bool>* starboard_ignition_repeat = nullptr;
 
 const char* bool_text(bool value) { return value ? "true" : "false"; }
 
@@ -146,29 +155,87 @@ void set_engine_room_fire_notification(bool active) {
   }
 }
 
+void log_heap(const char* when) {
+  LOG_I("Heap %s: free %u, largest block %u, min free %u", when,
+        static_cast<unsigned>(esp_get_free_heap_size()),
+        static_cast<unsigned>(
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+        static_cast<unsigned>(esp_get_minimum_free_heap_size()));
+}
+
+void resend_device_outputs() {
+  // Repeater-backed outputs first; the heartbeat has no repeater, so it goes
+  // last where a queue overflow (which drops the oldest) cannot reach it.
+  engine_room_fire_repeat->resend(engine_room_fire_notification);
+  port_ignition_repeat->resend(port_ignition_input);
+  starboard_ignition_repeat->resend(starboard_ignition_input);
+  heartbeat_reporter->onSKServerConnect();
+}
+
+// The connect re-send, one step per entry, in order.
+void (*const kResendSteps[])() = {
+    resend_device_outputs,
+    []() { forward_pump->onSKServerConnect(); },
+    []() { aft_pump->onSKServerConnect(); },
+    []() { forward_emergency_pump->onSKServerConnect(); },
+    []() { aft_emergency_pump->onSKServerConnect(); },
+    []() { interior_emergency_pump->onSKServerConnect(); },
+};
+constexpr size_t kResendStepCount =
+    sizeof(kResendSteps) / sizeof(kResendSteps[0]);
+
+// Incremented on every connect; a re-send chain started by an earlier connect
+// sees the mismatch and stops.
+uint32_t sk_connect_generation = 0;
+
+// The since-boot minimum free heap when the latest connect began.
+uint32_t min_free_at_connect = 0;
+
+/**
+ * @brief Runs one step of the connect re-send and schedules the next.
+ *
+ * Each step is scheduled kResendStepSpacingMs after the previous one actually
+ * ran, so a stalled loop cannot merge two steps into one send window.
+ */
+void run_resend_step(size_t step, uint32_t generation) {
+  if (generation != sk_connect_generation) {
+    return;
+  }
+  if (step >= kResendStepCount) {
+    // The metadata delta is built at the first send after connecting, so the
+    // connect's heap low point shows up here, not in the log at connect.
+    log_heap("after connect re-send");
+    const uint32_t min_free = esp_get_minimum_free_heap_size();
+    if (min_free < min_free_at_connect) {
+      LOG_I("Heap: this connect set a new low (min free %u, was %u)",
+            static_cast<unsigned>(min_free),
+            static_cast<unsigned>(min_free_at_connect));
+    }
+    return;
+  }
+  kResendSteps[step]();
+  event_loop()->onDelay(kResendStepSpacingMs, [step, generation]() {
+    run_resend_step(step + 1, generation);
+  });
+}
+
 /**
  * @brief Re-sends every current output. Called when the Signal K websocket
- * connects or reconnects, so the server has the full state immediately.
+ * connects or reconnects, so the server has the full state.
+ *
+ * The device-level outputs and then each pump go one step at a time (see
+ * run_resend_step()), so no burst overflows SensESP's delta queue. The first
+ * step waits one spacing, keeping the outputs out of the first delta, which
+ * carries the metadata.
  */
 void onSKServerConnect() {
-  forward_pump->onSKServerConnect();
-  aft_pump->onSKServerConnect();
-  forward_emergency_pump->onSKServerConnect();
-  aft_emergency_pump->onSKServerConnect();
-  interior_emergency_pump->onSKServerConnect();
-  if (heartbeat_reporter != nullptr) {
-    heartbeat_reporter->onSKServerConnect();
-  }
-
-  if (engine_room_fire_notification != nullptr) {
-    engine_room_fire_notification->notify();
-  }
-  if (port_ignition_input != nullptr) {
-    port_ignition_input->notify();
-  }
-  if (starboard_ignition_input != nullptr) {
-    starboard_ignition_input->notify();
-  }
+  // Compared at the end of the re-send to tell whether this connect set a new
+  // low. (IDF's local-minimum window would be more precise, but while open it
+  // also changes the minimum SensESP records as "min free before last reset".)
+  min_free_at_connect = esp_get_minimum_free_heap_size();
+  const uint32_t generation = ++sk_connect_generation;
+  event_loop()->onDelay(kResendStepSpacingMs,
+                        [generation]() { run_resend_step(0, generation); });
 }
 
 }  // namespace
@@ -179,17 +246,36 @@ void setup() {
   Serial.begin(115200);
   debug_setup();
 
+  SensESPAppBuilder builder;
+  sensesp_app = (&builder)
+                    ->set_hostname(kDeviceHostname)
+                    ->set_wifi_client(kBoatWifiSsid, kBoatWifiPassword)
+                    ->set_wifi_access_point(kDeviceHostname, kBoatWifiPassword)
+                    ->set_sk_server(kSignalKServerHost, kSignalKServerPort)
+                    ->get_app();
+
   // Task watchdog on the main loop: a boat-installed unit should reboot and
   // recover rather than hang silently if event_loop()->tick() ever stalls.
+  // This runs after get_app(), which formats the filesystem on a blank board
+  // and can block the loop for longer than the timeout. The Arduino core has
+  // already started the watchdog; reconfigure it with a longer timeout and
+  // keep the idle-task checks the core enables (on the ESP32, core 0's idle
+  // task, where WiFi and lwIP run).
   esp_task_wdt_config_t wdt_config = {
       .timeout_ms = kMainLoopWatchdogTimeoutMs,
+#if CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0
+      .idle_core_mask = BIT(0),
+#else
       .idle_core_mask = 0,
+#endif
       .trigger_panic = true};
-  // De-init in case the Arduino core already set one up; ignore errors.
-  esp_task_wdt_deinit();
-  esp_err_t wdt_ret = esp_task_wdt_init(&wdt_config);
+  esp_err_t wdt_ret = esp_task_wdt_reconfigure(&wdt_config);
+  if (wdt_ret == ESP_ERR_INVALID_STATE) {
+    // The core did not start it (CONFIG_ESP_TASK_WDT_INIT off): start it.
+    wdt_ret = esp_task_wdt_init(&wdt_config);
+  }
   if (wdt_ret != ESP_OK) {
-    LOG_E("Watchdog init failed: %d", wdt_ret);
+    LOG_E("Watchdog setup failed: %d", wdt_ret);
   } else {
     esp_err_t add_ret = esp_task_wdt_add(NULL);
     if (add_ret != ESP_OK) {
@@ -199,14 +285,6 @@ void setup() {
             static_cast<unsigned long>(kMainLoopWatchdogTimeoutMs));
     }
   }
-
-  SensESPAppBuilder builder;
-  sensesp_app = (&builder)
-                    ->set_hostname(kDeviceHostname)
-                    ->set_wifi_client(kBoatWifiSsid, kBoatWifiPassword)
-                    ->set_wifi_access_point(kDeviceHostname, kBoatWifiPassword)
-                    ->set_sk_server(kSignalKServerHost, kSignalKServerPort)
-                    ->get_app();
 
   LOG_I("Signal K: direct server mode enabled host=%s port=%u use_mdns=false",
         kSignalKServerHost, kSignalKServerPort);
@@ -314,8 +392,8 @@ void setup() {
   // No metadata on notification paths; see BilgePumpMonitor::begin().
   auto* engine_room_fire_output = new SKOutputRawJson(
       kEngineRoomFireNotificationPath, "/inputs/engine_room_fire/sk");
-  engine_room_fire_notification
-      ->connect_to(new RepeatMutable<String>(aggregate_interval_ms))
+  engine_room_fire_repeat = new RepeatMutable<String>(aggregate_interval_ms);
+  engine_room_fire_notification->connect_to(engine_room_fire_repeat)
       ->connect_to(engine_room_fire_output);
   ConfigItem(engine_room_fire_output)
       ->set_title("Engine Room Fire Notification")
@@ -326,7 +404,8 @@ void setup() {
   auto* port_ignition_output = new SKOutputBool(
       kPortIgnitionPath, "/inputs/port_ignition/sk",
       new SKMetadata("", "Port Ignition"));
-  port_ignition_input->connect_to(new RepeatMutable<bool>(state_interval_ms))
+  port_ignition_repeat = new RepeatMutable<bool>(state_interval_ms);
+  port_ignition_input->connect_to(port_ignition_repeat)
       ->connect_to(port_ignition_output);
   ConfigItem(port_ignition_output)
       ->set_title("Port Ignition Path")
@@ -335,7 +414,8 @@ void setup() {
   auto* starboard_ignition_output = new SKOutputBool(
       kStarboardIgnitionPath, "/inputs/starboard_ignition/sk",
       new SKMetadata("", "Starboard Ignition"));
-  starboard_ignition_input->connect_to(new RepeatMutable<bool>(state_interval_ms))
+  starboard_ignition_repeat = new RepeatMutable<bool>(state_interval_ms);
+  starboard_ignition_input->connect_to(starboard_ignition_repeat)
       ->connect_to(starboard_ignition_output);
   ConfigItem(starboard_ignition_output)
       ->set_title("Starboard Ignition Path")
@@ -345,7 +425,13 @@ void setup() {
       new LambdaConsumer<SKWSConnectionState>([](SKWSConnectionState state) {
         if (state == SKWSConnectionState::kSKWSConnected) {
           LOG_I("Signal K: websocket connected, emitting full system state");
+          // The connect path is the device's largest transient allocation
+          // (websocket buffers plus the metadata delta).
+          log_heap("at connect");
           onSKServerConnect();
+        } else {
+          // Stop a re-send chain still running from the previous connect.
+          ++sk_connect_generation;
         }
       }));
 
