@@ -71,20 +71,17 @@ If these sources appear to conflict, stop and ask.
 ## SensESP guidance
 This project uses SensESP concepts and patterns.
 
-###Important
+### Important
 - Use deepwiki MCP to query `SignalK/SensESP` for general knowledge
-- The actual SensESP code used is in the `lib/` directory
-- `libdeps` references an unused copy of SensESP that should be ignored
-- Assume local fork is definitive truth for latest behavior
-- Prefer local fork when referencing framework code or proposing framework fixes.
-- If a limitation or bug appears to be in SensESP, it is acceptable to identify that clearly and propose a fix that could be made in the user's fork.
+- SensESP is `SignalK/SensESP` pinned to an exact commit in `platformio.ini`
+  `lib_deps`; the code actually built is in `.pio/libdeps/halmet/SensESP`. No forks,
+  `lib/` copies or symlinks.
+- If a limitation or bug appears to be in SensESP, identify it clearly and propose a fix upstream in `SignalK/SensESP`.
 - Do not replace SensESP with another framework unless explicitly asked.
 - App-specific SensESP-style enhancements in this project, such as extended listeners, custom transforms, or other reusable pipeline components, should use the `app` namespace.
 - App-specific classes should mimic the SensESP source tree and be placed in matching project folders such as `src/signalk`, `src/transforms`, `src/system`, or `src/sensors` as appropriate.
 - Do not place app-specific classes in the `sensesp` namespace unless the class actually belongs in the SensESP library.
 - Do not place app-specific classes in the `halmet` namespace; reserve `halmet` for generic HALMET-related code that could later move into a shared Halmet library.
-
-**CRITIAL** - This project uses the author's version of SensESP found in the `lib/` directory. Since PlatformIO prioritizes code in the `lib` folder, the copy that exists in `.pio/libdeps/halmet/SensESP` can and should be ignored.
 
 ## SignalK guidance
 - The historical Signal K specification repository is useful for general background, but it is not the authoritative source for current 2.x behavior.

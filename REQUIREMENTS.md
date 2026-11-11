@@ -269,7 +269,7 @@ Example clear payload:
 ## Local Reference Patterns
 The project should use the local example in `/examples/halmet-vacuflush` as the primary reference for code structure, startup flow, and organization. 
 
-As a secondary source of SensESP patterns, refer to the author's SensESP fork in `lib/SensESP`, including its examples. The copy in `.pio/libdeps/halmet/SensESP` is not authoritative for this project.
+As a secondary source of SensESP patterns, refer to the SensESP source and examples the build actually uses, in `.pio/libdeps/halmet/SensESP` (`SignalK/SensESP` pinned in `platformio.ini`).
 
 ## Signal K Source Of Truth
 - The historical Signal K specification repository is useful for general background, terminology, and older examples.
