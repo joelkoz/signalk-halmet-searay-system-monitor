@@ -55,16 +55,10 @@ BilgePumpMonitor::BilgePumpMonitor(const String& pump_role,
       emergency_exercise_warning_days_(kDefaultEmergencyExerciseWarningDays) {
   incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kEmergencyRunning)]
       .suffix = "emergencyRunning";
-  incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kEmergencyRunning)]
-      .title = "Emergency Running Alert";
   incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kMaxRunTime)]
       .suffix = "maxRunTime";
-  incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kMaxRunTime)]
-      .title = "Max Run Time Alert";
   incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kShortCycles)]
       .suffix = "shortCycles";
-  incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kShortCycles)]
-      .title = "Short Cycle Alert";
   initialize_paths();
 }
 
@@ -129,16 +123,21 @@ void BilgePumpMonitor::begin(float state_report_interval_seconds,
       ->connect_to(new sensesp::SKOutputFloat(
           average_idle_time_sk_path_, "", make_average_idle_time_metadata()));
 
+  // Notification paths carry no Signal K metadata. SensESP sends the metadata
+  // of every output in one delta on each connect, and with all five pumps the
+  // full set exceeded the websocket send buffer: it was dropped every time,
+  // and building it nearly exhausted the heap on reconnect. Value paths keep
+  // their units and display names; the descriptions were dropped for the same
+  // reason.
   health_notification_->connect_to(
                          new RepeatMutable<String>(aggregate_interval_ms))
-      ->connect_to(new sensesp::SKOutputRawJson(
-          health_notification_sk_path_, "", make_health_notification_metadata()));
+      ->connect_to(new sensesp::SKOutputRawJson(health_notification_sk_path_,
+                                                ""));
 
   for (auto& incident_alert : incident_alerts_) {
     incident_alert.notification = new sensesp::ObservableValue<String>("");
-    incident_alert.notification->connect_to(new sensesp::SKOutputRawJson(
-        incident_alert.sk_path, "",
-        make_incident_alert_metadata(String(incident_alert.title))));
+    incident_alert.notification->connect_to(
+        new sensesp::SKOutputRawJson(incident_alert.sk_path, ""));
   }
 
   if (raw_run_input_ != nullptr) {
@@ -284,64 +283,42 @@ String BilgePumpMonitor::format_alert_timestamp(time_t epoch_seconds) const {
 
 sensesp::SKMetadata* BilgePumpMonitor::make_running_metadata() const {
   return new sensesp::SKMetadata(
-      "", pump_name_ + " Running",
-      "True when the bilge pump signal indicates the pump is running.");
+      "", pump_name_ + " Running");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_last_run_time_metadata() const {
   return new sensesp::SKMetadata(
-      "s", pump_name_ + " Last Cycle Run Time",
-      "Duration in seconds of the most recently completed pump run cycle.");
+      "s", pump_name_ + " Last Cycle Run Time");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_last_idle_time_metadata() const {
   return new sensesp::SKMetadata(
-      "s", pump_name_ + " Last Cycle Idle Time",
-      "Idle time in seconds measured before the current or most recent pump run cycle started.");
+      "s", pump_name_ + " Last Cycle Idle Time");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_daily_cycle_count_metadata() const {
   return new sensesp::SKMetadata(
-      "count", pump_name_ + " Daily Cycle Count",
-      "Number of completed pump cycles since the most recent midnight boundary.");
+      "count", pump_name_ + " Daily Cycle Count");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_total_cycle_count_metadata() const {
   return new sensesp::SKMetadata(
-      "count", pump_name_ + " Total Cycle Count",
-      "Total number of completed pump cycles retained across reboot.");
+      "count", pump_name_ + " Total Cycle Count");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_short_cycle_count_metadata() const {
   return new sensesp::SKMetadata(
-      "count", pump_name_ + " Short Cycle Count",
-      "Current count of consecutive short pump cycles.");
+      "count", pump_name_ + " Short Cycle Count");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_average_run_time_metadata() const {
   return new sensesp::SKMetadata(
-      "s", pump_name_ + " Average Cycle Run Time",
-      "Average completed pump run duration in seconds since device boot.");
+      "s", pump_name_ + " Average Cycle Run Time");
 }
 
 sensesp::SKMetadata* BilgePumpMonitor::make_average_idle_time_metadata() const {
   return new sensesp::SKMetadata(
-      "s", pump_name_ + " Average Cycle Idle Time",
-      "Average pump idle duration between cycles in seconds since device boot.");
-}
-
-sensesp::SKMetadata* BilgePumpMonitor::make_health_notification_metadata()
-    const {
-  return new sensesp::SKMetadata(
-      "", pump_name_ + " Health",
-      "Overall bilge pump health notification.");
-}
-
-sensesp::SKMetadata* BilgePumpMonitor::make_incident_alert_metadata(
-    const String& title) const {
-  return new sensesp::SKMetadata(
-      "", pump_name_ + " " + title,
-      "Pump incident alert with explicit start and resolution updates.");
+      "s", pump_name_ + " Average Cycle Idle Time");
 }
 
 void BilgePumpMonitor::set_health_notification(const char* state,

@@ -99,8 +99,6 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   sensesp::SKMetadata* make_short_cycle_count_metadata() const;
   sensesp::SKMetadata* make_average_run_time_metadata() const;
   sensesp::SKMetadata* make_average_idle_time_metadata() const;
-  sensesp::SKMetadata* make_health_notification_metadata() const;
-  sensesp::SKMetadata* make_incident_alert_metadata(const String& title) const;
 
   void set_health_notification(const char* state, const String& message,
                                bool audible);
@@ -156,7 +154,6 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
 
   struct IncidentAlertChannel {
     const char* suffix = "";
-    const char* title = "";
     String sk_path;
     sensesp::ObservableValue<String>* notification = nullptr;
     bool active = false;

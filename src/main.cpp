@@ -311,10 +311,9 @@ void setup() {
   engine_room_fire_notification = new ObservableValue<String>(
       make_notification_payload("normal", "Engine room fire heat detector normal",
                                 false));
+  // No metadata on notification paths; see BilgePumpMonitor::begin().
   auto* engine_room_fire_output = new SKOutputRawJson(
-      kEngineRoomFireNotificationPath, "/inputs/engine_room_fire/sk",
-      new SKMetadata("", "Engine Room Fire",
-                     "Emergency notification for the engine room fire heat detector."));
+      kEngineRoomFireNotificationPath, "/inputs/engine_room_fire/sk");
   engine_room_fire_notification
       ->connect_to(new RepeatMutable<String>(aggregate_interval_ms))
       ->connect_to(engine_room_fire_output);
@@ -326,8 +325,7 @@ void setup() {
 
   auto* port_ignition_output = new SKOutputBool(
       kPortIgnitionPath, "/inputs/port_ignition/sk",
-      new SKMetadata("", "Port Ignition",
-                     "True when the port ignition signal is active."));
+      new SKMetadata("", "Port Ignition"));
   port_ignition_input->connect_to(new RepeatMutable<bool>(state_interval_ms))
       ->connect_to(port_ignition_output);
   ConfigItem(port_ignition_output)
@@ -336,8 +334,7 @@ void setup() {
 
   auto* starboard_ignition_output = new SKOutputBool(
       kStarboardIgnitionPath, "/inputs/starboard_ignition/sk",
-      new SKMetadata("", "Starboard Ignition",
-                     "True when the starboard ignition signal is active."));
+      new SKMetadata("", "Starboard Ignition"));
   starboard_ignition_input->connect_to(new RepeatMutable<bool>(state_interval_ms))
       ->connect_to(starboard_ignition_output);
   ConfigItem(starboard_ignition_output)

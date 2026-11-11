@@ -192,6 +192,7 @@ The project should prefer standard SensESP producer / transform / consumer patte
 - Driving an output pin from another state should prefer normal SensESP wiring, for example producer -> transform -> `DigitalOutput`.
 - Signal K output classes should generally be consumers connected in `main.cpp` or in a component `begin()` convenience method, rather than being tightly coupled to the internal sensing logic.
 - Metadata should be attached to all custom Signal K paths. Numeric values should specify units. Writable paths should declare `supportsPut` when appropriate.
+- Exception, until SensESP can send metadata in more than one delta: notification paths carry no metadata, and value-path metadata is limited to units and a display name. SensESP sends the metadata of every output in a single delta on each connect; with five pumps the full set (13.9 KB) exceeded the websocket send buffer, so it was always dropped, and building it nearly exhausted the heap on reconnect. Keep the metadata delta well under `SENSESP_SK_WS_BUFFER_SIZE` when adding outputs.
 
 For "complex components" such as the pump monitor components:
 
