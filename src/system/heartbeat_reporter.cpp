@@ -1,8 +1,8 @@
 #include "system/heartbeat_reporter.h"
 
-#include "system/timer.h"
-#include "sensesp/system/lambda_consumer.h"
 #include "sensesp/signalk/signalk_output.h"
+#include "sensesp/system/lambda_consumer.h"
+#include "system/timer.h"
 
 namespace app {
 
@@ -19,6 +19,8 @@ unsigned long heartbeat_interval_ms(float seconds) {
   return static_cast<unsigned long>(clamp_heartbeat_interval(seconds) * 1000.0f);
 }
 
+float uptime_seconds() { return static_cast<float>(millis()) / 1000.0f; }
+
 }  // namespace
 
 HeartbeatReporter::HeartbeatReporter(const String& config_path,
@@ -31,28 +33,20 @@ HeartbeatReporter::HeartbeatReporter(const String& config_path,
 
   heartbeat_value_ = new sensesp::ObservableValue<float>(0.0f);
   auto* timer = new Timer("", heartbeat_interval_ms(heartbeat_interval_s_));
-  timer
-      ->connect_to(new sensesp::LambdaConsumer<unsigned long>(
-          [this](unsigned long uptime_ms) {
-            if (heartbeat_value_ != nullptr) {
-              heartbeat_value_->set(static_cast<float>(uptime_ms) / 1000.0f);
-            }
-          }));
+  timer->connect_to(new sensesp::LambdaConsumer<unsigned long>(
+      [this](unsigned long uptime_ms) {
+        heartbeat_value_->set(static_cast<float>(uptime_ms) / 1000.0f);
+      }));
   heartbeat_value_->connect_to(new sensesp::SKOutputFloat(
       sk_path_, "", new sensesp::SKMetadata(
-                       "s", "SeaRay Systems Monitor Heartbeat",
+                       "s", "Device Heartbeat",
                        "Current device uptime in seconds")));
-  sensesp::event_loop()->onDelay(0, [this]() {
-    if (heartbeat_value_ != nullptr) {
-      heartbeat_value_->set(static_cast<float>(millis()) / 1000.0f);
-    }
-  });
+  sensesp::event_loop()->onDelay(
+      0, [this]() { heartbeat_value_->set(uptime_seconds()); });
 }
 
-void HeartbeatReporter::republish_output() {
-  if (heartbeat_value_ != nullptr) {
-    heartbeat_value_->notify();
-  }
+void HeartbeatReporter::onSKServerConnect() {
+  heartbeat_value_->set(uptime_seconds());
 }
 
 bool HeartbeatReporter::to_json(JsonObject& root) {

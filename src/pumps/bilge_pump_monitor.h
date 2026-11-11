@@ -34,7 +34,6 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   void begin(float state_report_interval_seconds,
              float aggregate_report_interval_seconds);
   void log_state_debug() const;
-  void republish_outputs();
   void onSKServerConnect();
 
   const String& pump_name() const { return pump_name_; }

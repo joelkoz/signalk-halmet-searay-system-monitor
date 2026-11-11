@@ -604,7 +604,7 @@ void BilgePumpMonitor::evaluate() {
   update_health_notification(now_seconds);
 }
 
-void BilgePumpMonitor::republish_outputs() {
+void BilgePumpMonitor::onSKServerConnect() {
   if (!started_) {
     return;
   }
@@ -618,9 +618,17 @@ void BilgePumpMonitor::republish_outputs() {
   average_run_time_->notify();
   average_idle_time_->notify();
   health_notification_->notify();
-}
 
-void BilgePumpMonitor::onSKServerConnect() { republish_outputs(); }
+  // Incident alerts are sent only when they change, so re-send the last one
+  // on each channel: an alert raised while disconnected (e.g. during a server
+  // restart) would otherwise never reach Signal K.
+  for (auto& incident_alert : incident_alerts_) {
+    if (incident_alert.notification != nullptr &&
+        !incident_alert.notification->get().isEmpty()) {
+      incident_alert.notification->notify();
+    }
+  }
+}
 
 void BilgePumpMonitor::log_state_debug() const {
   LOG_D(

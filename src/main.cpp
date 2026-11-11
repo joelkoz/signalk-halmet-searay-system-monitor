@@ -143,14 +143,18 @@ void set_engine_room_fire_notification(bool active) {
   }
 }
 
-void republish_all_outputs() {
-  forward_pump->republish_outputs();
-  aft_pump->republish_outputs();
-  forward_emergency_pump->republish_outputs();
-  aft_emergency_pump->republish_outputs();
-  interior_emergency_pump->republish_outputs();
+/**
+ * @brief Re-sends every current output. Called when the Signal K websocket
+ * connects or reconnects, so the server has the full state immediately.
+ */
+void onSKServerConnect() {
+  forward_pump->onSKServerConnect();
+  aft_pump->onSKServerConnect();
+  forward_emergency_pump->onSKServerConnect();
+  aft_emergency_pump->onSKServerConnect();
+  interior_emergency_pump->onSKServerConnect();
   if (heartbeat_reporter != nullptr) {
-    heartbeat_reporter->republish_output();
+    heartbeat_reporter->onSKServerConnect();
   }
 
   if (engine_room_fire_notification != nullptr) {
@@ -340,7 +344,7 @@ void setup() {
       new LambdaConsumer<SKWSConnectionState>([](SKWSConnectionState state) {
         if (state == SKWSConnectionState::kSKWSConnected) {
           LOG_I("Signal K: websocket connected, emitting full system state");
-          republish_all_outputs();
+          onSKServerConnect();
         }
       }));
 
