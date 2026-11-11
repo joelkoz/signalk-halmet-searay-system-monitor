@@ -14,7 +14,7 @@ Required behavior:
 - A different signal k path should be used for each pump.
 - The running state should also be re-sent periodically even if it has not changed.
 - This periodic state report interval should be configurable via the SensESP UI as one shared setting for both pumps.
-- The default periodic state report interval should be 2 seconds.
+- The default periodic state report interval should be 10 seconds.
 - Each run cycle should be timed. 
 - Report a "last cycle run time" and "last cycle idle time" to signal k each time a cycle status changes
 
@@ -268,7 +268,7 @@ Example clear payload:
 
 
 ## Local Reference Patterns
-The project should use the local example in `/examples/halmet-vacuflush` as the primary reference for code structure, startup flow, and organization. 
+The project should use the reference project `signalk-halmet-vacuflush` (a sibling project in the boat firmware workspace) as the primary reference for code structure, startup flow, and organization. 
 
 As a secondary source of SensESP patterns, refer to the SensESP source and examples the build actually uses, in `.pio/libdeps/halmet/SensESP` (`SignalK/SensESP` pinned in `platformio.ini`).
 
