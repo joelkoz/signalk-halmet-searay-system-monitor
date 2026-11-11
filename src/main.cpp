@@ -430,5 +430,4 @@ void loop() {
   });
 
   event_loop()->tick();
-  debug_loop();
 }

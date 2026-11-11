@@ -282,7 +282,7 @@ As a secondary source of SensESP patterns, refer to the author's SensESP fork in
 
 ## Debug Logging
 - When outputting status, error, or debug messages, use the macros found in `src/Debug.h`
-- Deployment of device uses RemoteDebug to manage, so avoid using ESP32 logging directly.
+- The `LOG_*` macros use ESP-IDF logging, which SensESP mirrors to the serial port and the device's web log (`/api/log`). There is no RemoteDebug/telnet.
 
 ## Device identity and networking
 - The device host name should be named `sk-monitor`
