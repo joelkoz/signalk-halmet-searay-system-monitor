@@ -7,5 +7,7 @@
 .vscode/launch.json
 .vscode/ipch
 .history
-lib/SensESP
 include/device_config.h
+
+# Local device settings (see .env-example)
+.env

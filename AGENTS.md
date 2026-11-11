@@ -24,20 +24,30 @@ Important:
 - When suggesting build, config, or dependency changes, assume the pioarduino environment is intentional.
 
 ## Device-specific configuration
-Boat-specific deployment settings belong in `include/device_config.h`.
+Boat-specific deployment settings live in the project's `.env` file (gitignored),
+with `.env-example` as the checked-in template.
 
-Use this file for:
-- secrets and credentials
-- WiFi and Signal K connection defaults
+Use it for:
+- secrets and credentials (WiFi, OTA password)
+- WiFi and Signal K connection settings
 - device identity such as hostname
 - locale or ship settings such as timezone
-- other per-boat or per-device constants that should not be hard-coded in application source files
+- the OTA upload target, if `<DEVICE_HOSTNAME>.local` does not resolve
+
+How it flows:
+- `scripts/load_dotenv.py` (a PlatformIO `pre:` script) reads `.env` and injects
+  each setting as a `CFG_<NAME>` macro; `include/env_config.h` turns those into the
+  `k*` constants the code uses. Never put values in `env_config.h`.
+- For `*_ota` environments the same script sets the espota upload target and
+  `--auth` password from `.env`, so the OTA password compiled into the firmware
+  always matches the one used to upload. Never put a password in `platformio.ini`.
 
 Rules:
-- `include/device_config.h` is local and should remain uncommitted
-- `include/device_config.example.h` is the checked-in template
-- whenever a new device-specific configuration variable is introduced, add it to both files
-- prefer reading such values from `device_config.h` rather than duplicating per-boat constants in `main.cpp` or introducing additional local config files unless there is a strong reason
+- `.env` is local and must never be committed
+- whenever a new device-specific setting is introduced, add it to `.env-example`,
+  to the settings lists in `scripts/load_dotenv.py`, and to `include/env_config.h`
+- prefer reading such values from `env_config.h` rather than duplicating per-boat
+  constants in `main.cpp`
 
 ## Authoritative project references
 Use these sources in this order:

@@ -67,16 +67,16 @@ monitoring. SeaRay Systems Monitor display panels are no longer available, and
 on my boat, the display no longer functions, thus it no longer is monitoring these
 last few systems.  Reporting status and health of the these signals is the missing
 piece to retiring the old system monitor altogther and removing it from the boat.
-## Local secrets setup
+## Building and flashing
 
-This project expects boat-specific credentials in a local header that is not
-committed to git.
+This is a [PlatformIO](https://platformio.org/) project (it uses the
+[pioarduino](https://github.com/pioarduino/platform-espressif32) platform).
 
-Before the first build:
-
-1. Copy `include/device_config.example.h` to `include/device_config.h`
-2. Edit the values in `include/device_config.h` for your boat
-3. Build the firmware
-
-If `include/device_config.h` is missing, the build will stop with a friendly
-compiler message that explains what to do.
+1. Copy `.env-example` to `.env` and fill in your WiFi, Signal K server, OTA
+   password and time zone. `.env` is gitignored; it is read automatically for
+   every build and upload, from the command line or the PlatformIO IDE.
+2. Build: `pio run -e halmet`
+3. First flash over USB: `pio run -e halmet -t upload`
+4. Later updates over WiFi: `pio run -e halmet_ota -t upload`. This uploads to
+   `<DEVICE_HOSTNAME>.local` (or `OTA_UPLOAD_HOST` if set) using `OTA_PASSWORD`,
+   the same password that was compiled into the firmware.

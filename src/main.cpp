@@ -9,11 +9,7 @@
 #include <WiFi.h>
 #include <esp_task_wdt.h>
 
-#if __has_include("device_config.h")
-#include "device_config.h"
-#else
-#error "Missing device_config.h. Copy include/device_config.example.h to include/device_config.h and fill in your local settings before building."
-#endif
+#include "env_config.h"
 
 #include "Debug.h"
 #include "pumps/bilge_pump_monitor.h"
@@ -355,10 +351,9 @@ void setup() {
       ->set_title("Device Heartbeat")
       ->set_sort_order(uiCounter.nextValue());
 
-  // Setup OTA with watchdog feeding
   event_loop()->onDelay(0, []() {
     ArduinoOTA.setHostname(kDeviceHostname);
-    ArduinoOTA.setPassword(kBoatWifiPassword);
+    ArduinoOTA.setPassword(kOtaPassword);
     ArduinoOTA.onStart([]() {
       esp_task_wdt_reset();
       LOG_W("OTA: starting update");
