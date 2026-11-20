@@ -11,3 +11,6 @@ include/device_config.h
 
 # Local device settings (see .env-example)
 .env
+
+# Per-machine Claude Code settings
+.claude/settings.local.json
