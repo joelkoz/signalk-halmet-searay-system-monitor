@@ -46,7 +46,7 @@ Behavior:
 - For this app, this reconnect republish behavior should cover heartbeat, pump states,
   pump health notifications, fire notifications, cycle statistics, last-cycle values,
   ignition states, and incident alerts that are still active
-- A resolved incident alert is not re-sent on reconnect (decided by Joel, 2026-11-11):
+- A resolved incident alert is not re-sent on reconnect:
   re-sending its "now resolved" warning would raise it again after every server
   restart, and a device reboot would drop it anyway
 
@@ -271,7 +271,7 @@ Example clear payload:
 
 
 ## Local Reference Patterns
-The project should use the reference project `signalk-halmet-vacuflush` (a sibling project in the boat firmware workspace) as the primary reference for code structure, startup flow, and organization. 
+The project should use the reference project [`signalk-halmet-vacuflush`](https://github.com/joelkoz/signalk-halmet-vacuflush) as the primary reference for code structure, startup flow, and organization. 
 
 As a secondary source of SensESP patterns, refer to the SensESP source and examples the build actually uses, in `.pio/libdeps/halmet/SensESP` (`SignalK/SensESP` pinned in `platformio.ini`).
 
@@ -289,12 +289,13 @@ As a secondary source of SensESP patterns, refer to the SensESP source and examp
 - The `LOG_*` macros use ESP-IDF logging, which SensESP mirrors to the serial port and the device's web log (`/api/log`). There is no RemoteDebug/telnet.
 
 ## Device identity and networking
-- The device host name should be named `sk-monitor`
-- The device is running on same network as example device, so it should use same WiFi credentials
-  and SignalK server as the example device.
+- The default device host name is `sk-monitor` (`DEVICE_HOSTNAME` in `.env`)
+- WiFi credentials and the Signal K server come from `.env`, with the same settings and
+  mechanism as the reference project.
 
 ## OTA Updating
-- The device will be deployed in the same area as the example device, so it should use the same OTA updating mechanism.
+- Over-the-air updates use the same mechanism as the reference project (espota, via the
+  `halmet_ota` environment).
 
 ## Notes
 This is a boat-installed embedded device, so priorities are:

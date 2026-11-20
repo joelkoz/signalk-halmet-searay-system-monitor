@@ -61,12 +61,14 @@ unto themselves do not indicate a problem.
 
 ## Problem Being Solved
 
-Most of the components monitored by the old SeaRay Systems Monitor device are available in much more detail over the boats upgraded NMEA 2000 network installed after the boat was
-manufacdtured.  The bilge pumps are the remaining systems that do not have alternative
-monitoring. SeaRay Systems Monitor display panels are no longer available, and
-on my boat, the display no longer functions, thus it no longer is monitoring these
-last few systems.  Reporting status and health of the these signals is the missing
-piece to retiring the old system monitor altogther and removing it from the boat.
+On a boat upgraded with an NMEA 2000 network, most of the components the old
+SeaRay Systems Monitor watched are available there in much more detail. The bilge
+pumps are the remaining systems with no alternative monitoring. SeaRay Systems
+Monitor display panels are no longer available, so once a display fails, those
+last few systems go unmonitored. Reporting the status and health of these signals
+is the missing piece to retiring the old system monitor altogether and removing it
+from the boat.
+
 ## Building and flashing
 
 This is a [PlatformIO](https://platformio.org/) project (it uses the
