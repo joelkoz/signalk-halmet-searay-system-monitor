@@ -48,7 +48,7 @@ Behavior:
   ignition states, and incident alerts that are still active
 - A resolved incident alert is not re-sent on reconnect:
   re-sending its "now resolved" warning would raise it again after every server
-  restart, and a device reboot would drop it anyway
+  restart. It stays in Signal K until it is acknowledged (see Incident alerts)
 
 ### 3. Pump Health
 
@@ -67,6 +67,18 @@ o Emergency pump (e.g. forward emergency, aft emergency)
   - The emergency pumps should be exercised on a test basis periodically. A
     "warning" alert for an emergency pump that has not run at least once in
     the last 60 days (configurable) should prompt the user to test its functionality
+  - A run shorter than the emergency alarm delay (configurable 0-30 seconds,
+    default 3) is a test, not an emergency: it raises no "running" alarm, neither on
+    the health notification nor as an incident alert, but it still counts as a cycle
+    and as exercising the pump. The delay is measured from the start of the run to
+    when the run input last went inactive; the min stop time spent confirming the
+    stop does not count.
+  - Only an isolated short run is a test. A run that starts within 24 hours of the
+    previous run raises the alarm at once, whatever its length: an emergency pump
+    making repeated short runs is keeping up with water. Real tests are weeks apart,
+    so the only cost is that a second test of the same pump within a day alarms.
+    The time of the previous run is persisted, so the window survives a device
+    restart once the clock has been set from Signal K.
 
 
 #### Special note regarding SignalK "notifications"
@@ -268,6 +280,33 @@ Example clear payload:
     }]
   }]
 }
+
+Every health notification message begins with the pump's name (for example
+"Aft Emergency Bilge Pump: Emergency bilge pump has not been exercised recently"),
+because a notification forwarded on its own, such as a push message, does not
+carry its path.
+
+### Incident alerts
+Besides its health notification, each pump has incident alerts under
+`notifications.bilge.pumps.<role>.health.alert.<alert>` (`emergencyRunning`,
+`maxRunTime`, `shortCycles`), so an incident stays visible after the pump stops.
+
+- While the condition holds, the alert is raised (`alarm`).
+- When it ends, the alert changes to a `warn` whose message says when the incident
+  started and that it is now resolved.
+- The resolved warning returns to `normal` once it has been acknowledged in Signal K.
+  The device watches its incident alert paths and acts on the server's
+  `status.acknowledged` flag. An alert acknowledged while it was still active
+  returns to `normal` as soon as it is resolved. Signal K clears the flag whenever
+  an alert's severity rises, so each new incident has to be acknowledged again.
+- Only a `warn` (a resolved incident) is ever returned to `normal` this way, never an
+  `alarm`: after a reboot an acknowledged alarm may be an incident that is still
+  going on but not yet detected again.
+- The server sends the current value of these paths on every (re)connect, so an
+  acknowledged resolved warning left over from before a reboot is also returned to
+  `normal`.
+- On a server whose notifications carry no `status`, the resolved warning stays
+  until the server restarts.
 
 
 ## Local Reference Patterns

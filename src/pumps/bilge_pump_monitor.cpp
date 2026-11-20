@@ -2,8 +2,11 @@
 
 #include <ArduinoJson.h>
 
+#include <cmath>
+
 #include "Debug.h"
 #include "sensesp/signalk/signalk_output.h"
+#include "sensesp/signalk/signalk_prefix_listener.h"
 #include "sensesp/system/lambda_consumer.h"
 
 namespace app {
@@ -16,6 +19,14 @@ constexpr float kDefaultMinIdleTimeSeconds = 300.0f;
 constexpr int kDefaultMaxConsecutiveShortCycles = 5;
 constexpr float kDefaultPrimaryStaleWarningDays = 30.0f;
 constexpr float kDefaultEmergencyExerciseWarningDays = 60.0f;
+constexpr float kDefaultEmergencyAlarmDelaySeconds = 3.0f;
+constexpr float kMaxEmergencyAlarmDelaySeconds = 30.0f;
+// A short emergency run within this time of the previous run is not a test:
+// a pump making repeated short runs is keeping up with water. Real tests are
+// weeks apart (see the exercise warning), so a long window costs little.
+constexpr int kEmergencyTestRunWindowSeconds = 24 * 60 * 60;
+constexpr unsigned long kEmergencyTestRunWindowMs =
+    static_cast<unsigned long>(kEmergencyTestRunWindowSeconds) * 1000UL;
 
 constexpr unsigned long kMonitorEvaluationIntervalMs = 200;
 constexpr float kMinReportIntervalSeconds = 0.1f;
@@ -52,7 +63,8 @@ BilgePumpMonitor::BilgePumpMonitor(const String& pump_role,
       min_idle_time_s_(kDefaultMinIdleTimeSeconds),
       max_consecutive_short_cycles_(kDefaultMaxConsecutiveShortCycles),
       primary_stale_warning_days_(kDefaultPrimaryStaleWarningDays),
-      emergency_exercise_warning_days_(kDefaultEmergencyExerciseWarningDays) {
+      emergency_exercise_warning_days_(kDefaultEmergencyExerciseWarningDays),
+      emergency_alarm_delay_s_(kDefaultEmergencyAlarmDelaySeconds) {
   incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kEmergencyRunning)]
       .suffix = "emergencyRunning";
   incident_alerts_[static_cast<size_t>(PumpIncidentAlertId::kMaxRunTime)]
@@ -85,7 +97,8 @@ void BilgePumpMonitor::begin(float state_report_interval_seconds,
   health_reference_epoch_ = new sensesp::PersistingObservableValue<int>(
       0, get_config_path() + "/stats/health_reference_epoch");
   health_notification_ = new sensesp::ObservableValue<String>(
-      make_notification_payload("normal", "Pump health is normal", false));
+      make_notification_payload("normal", pump_name_ + ": Pump health is normal",
+                                false));
 
   load();
 
@@ -146,6 +159,20 @@ void BilgePumpMonitor::begin(float state_report_interval_seconds,
     incident_alert.notification->connect_to(
         new sensesp::SKOutputRawJson(incident_alert.sk_path, ""));
   }
+
+  // A resolved incident stays a warning until someone acknowledges it in
+  // Signal K. The server reports that in the notification's status, so watch
+  // this pump's incident alert paths. On every (re)connect the server also
+  // sends their current values, which lets an alert left over from before a
+  // reboot be cleared once acknowledged.
+  incident_alert_prefix_ = health_notification_sk_path_ + ".alert.";
+  auto* incident_alert_listener =
+      new sensesp::SKPrefixListener(incident_alert_prefix_);
+  incident_alert_listener->connect_to(
+      new sensesp::LambdaConsumer<sensesp::SKPathValue>(
+          [this](const sensesp::SKPathValue& update) {
+            handle_incident_alert_update(update);
+          }));
 
   if (raw_run_input_ != nullptr) {
     raw_running_ = raw_run_input_->get();
@@ -337,7 +364,10 @@ void BilgePumpMonitor::set_health_notification(const char* state,
 
   active_health_state_ = state;
   active_health_message_ = message;
-  health_notification_->set(make_notification_payload(state, message, audible));
+  // Name the pump: a notification forwarded on its own (e.g. a push message)
+  // does not carry its path, and several pumps share each message.
+  health_notification_->set(
+      make_notification_payload(state, pump_name_ + ": " + message, audible));
 
   if (strcmp(state, "normal") == 0) {
     LOG_I("%s: pump health normal", pump_name_.c_str());
@@ -356,6 +386,44 @@ void BilgePumpMonitor::update_incident_alert(PumpIncidentAlertId alert_id,
     emit_incident_alert(alert_id, state, reason, audible, now_seconds);
   } else {
     emit_incident_alert_resolution(alert_id);
+  }
+}
+
+void BilgePumpMonitor::handle_incident_alert_update(
+    const sensesp::SKPathValue& update) {
+  if (!update.path.startsWith(incident_alert_prefix_)) {
+    return;
+  }
+  const char* suffix = update.path.c_str() + incident_alert_prefix_.length();
+
+  for (auto& incident_alert : incident_alerts_) {
+    if (strcmp(suffix, incident_alert.suffix) != 0) {
+      continue;
+    }
+    // An active incident stays raised whatever its acknowledgement.
+    if (incident_alert.active || incident_alert.notification == nullptr) {
+      return;
+    }
+    // Only the "resolved" warning may be cleared. An acknowledged alarm seen
+    // after a reboot can be an incident that is still going on but not yet
+    // re-detected (the max run timer restarts, short cycles are not kept).
+    // Since boot, also require this device's own resolved message, so a late
+    // acknowledgement of an earlier resolution cannot clear a newer one.
+    const char* state = update.value["state"] | "";
+    const char* message = update.value["message"] | "";
+    const bool acknowledged = update.value["status"]["acknowledged"] | false;
+    const bool own_resolution =
+        incident_alert.resolved_message.isEmpty() ||
+        incident_alert.resolved_message == message;
+    if (strcmp(state, "warn") == 0 && acknowledged && own_resolution) {
+      incident_alert.notification->set(make_notification_payload(
+          "normal", pump_name_ + " incident resolved and acknowledged",
+          false));
+      incident_alert.resolved_message = "";
+      LOG_I("%s: acknowledged incident alert returned to normal on %s",
+            pump_name_.c_str(), update.path.c_str());
+    }
+    return;
   }
 }
 
@@ -400,6 +468,7 @@ void BilgePumpMonitor::emit_incident_alert_resolution(
   }
   message += " now resolved: " + incident_alert.active_reason;
 
+  incident_alert.resolved_message = message;
   incident_alert.notification->set(
       make_notification_payload("warn", message, false));
   LOG_I("%s: incident alert resolved on %s: %s", pump_name_.c_str(),
@@ -431,8 +500,43 @@ int BilgePumpMonitor::emergency_exercise_warning_seconds() const {
   return static_cast<int>(emergency_exercise_warning_days_ * 86400.0f);
 }
 
+unsigned long BilgePumpMonitor::emergency_alarm_delay_ms() const {
+  return static_cast<unsigned long>(emergency_alarm_delay_s_ * 1000.0f);
+}
+
+// A run of an emergency pump shorter than the alarm delay is a test, not an
+// emergency; it still counts as a cycle and as exercising the pump. Only an
+// isolated run qualifies: one that starts within kEmergencyTestRunWindowSeconds
+// of the previous run alarms at once. Time stops counting once the input
+// goes inactive, so the min stop time spent confirming the stop cannot stretch
+// a short test past the delay.
+bool BilgePumpMonitor::emergency_alarm_due(unsigned long now_ms) const {
+  if (!is_emergency_pump() || !logical_running_) {
+    return false;
+  }
+  if (!emergency_test_run_allowed_) {
+    return true;
+  }
+  const unsigned long run_end_ms =
+      stop_candidate_ms_ != 0 ? stop_candidate_ms_ : now_ms;
+  return run_end_ms - cycle_start_ms_ >= emergency_alarm_delay_ms();
+}
+
 void BilgePumpMonitor::handle_running_start(unsigned long now_ms,
                                             time_t now_seconds) {
+  // Read before last_run_epoch_ is overwritten below. It is persisted, so the
+  // previous run is remembered across a restart once the clock is set; the
+  // millis() record covers the time before that.
+  const int previous_run_epoch = last_run_epoch_->get();
+  bool recent_run = false;
+  if (valid_wall_clock(now_seconds) && previous_run_epoch > 0) {
+    recent_run = static_cast<int>(now_seconds) - previous_run_epoch <
+                 kEmergencyTestRunWindowSeconds;
+  } else if (emergency_run_ended_) {
+    recent_run = now_ms - emergency_run_end_ms_ < kEmergencyTestRunWindowMs;
+  }
+  emergency_test_run_allowed_ = !recent_run;
+
   if (idle_timer_active_) {
     const unsigned long idle_duration = now_ms - idle_start_ms_;
     *last_idle_time_ = static_cast<float>(idle_duration) / 1000.0f;
@@ -463,6 +567,8 @@ void BilgePumpMonitor::handle_running_start(unsigned long now_ms,
 void BilgePumpMonitor::handle_running_stop(unsigned long now_ms,
                                            time_t now_seconds) {
   const unsigned long run_duration = stop_candidate_ms_ - cycle_start_ms_;
+  emergency_run_ended_ = true;
+  emergency_run_end_ms_ = stop_candidate_ms_;
   update_daily_cycle_boundary(now_seconds);
   ++(*daily_cycle_count_);
   ++(*total_cycle_count_);
@@ -497,7 +603,7 @@ void BilgePumpMonitor::update_short_cycle_window(unsigned long now_ms) {
 }
 
 void BilgePumpMonitor::update_incident_alerts(time_t now_seconds) {
-  const bool emergency_running = is_emergency_pump() && logical_running_;
+  const bool emergency_running = emergency_alarm_due(millis());
   const bool max_run_time_exceeded =
       logical_running_ && cycle_start_ms_ != 0 &&
       millis() - cycle_start_ms_ > max_run_time_ms();
@@ -523,7 +629,7 @@ void BilgePumpMonitor::update_health_notification(time_t now_seconds) {
     return;
   }
 
-  if (is_emergency_pump() && logical_running_) {
+  if (emergency_alarm_due(millis())) {
     set_health_notification("alarm", "Emergency bilge pump is running", true);
     return;
   }
@@ -583,6 +689,11 @@ void BilgePumpMonitor::evaluate() {
     handle_running_stop(now_ms, now_seconds);
   }
 
+  if (emergency_run_ended_ &&
+      now_ms - emergency_run_end_ms_ >= kEmergencyTestRunWindowMs) {
+    emergency_run_ended_ = false;  // expire before millis() can wrap onto it
+  }
+
   update_short_cycle_window(now_ms);
   update_incident_alerts(now_seconds);
   update_health_notification(now_seconds);
@@ -638,6 +749,7 @@ bool BilgePumpMonitor::to_json(JsonObject& root) {
   root["max_consecutive_short_cycles"] = max_consecutive_short_cycles_;
   root["primary_stale_warning_days"] = primary_stale_warning_days_;
   root["emergency_exercise_warning_days"] = emergency_exercise_warning_days_;
+  root["emergency_alarm_delay_s"] = emergency_alarm_delay_s_;
   root["running_sk_path"] = running_sk_path_;
   root["last_run_time_sk_path"] = last_run_time_sk_path_;
   root["last_idle_time_sk_path"] = last_idle_time_sk_path_;
@@ -676,6 +788,15 @@ bool BilgePumpMonitor::from_json(const JsonObject& config) {
   if (!config["emergency_exercise_warning_days"].isNull()) {
     emergency_exercise_warning_days_ = clamp_min_float(
         config["emergency_exercise_warning_days"].as<float>(), 0.0f);
+  }
+  if (!config["emergency_alarm_delay_s"].isNull()) {
+    const float delay_s = config["emergency_alarm_delay_s"].as<float>();
+    if (!std::isnan(delay_s)) {
+      const float clamped_s = clamp_min_float(delay_s, kMinThresholdSeconds);
+      emergency_alarm_delay_s_ = clamped_s > kMaxEmergencyAlarmDelaySeconds
+                                     ? kMaxEmergencyAlarmDelaySeconds
+                                     : clamped_s;
+    }
   }
   if (!config["running_sk_path"].isNull()) {
     running_sk_path_ = config["running_sk_path"].as<String>();
@@ -727,6 +848,7 @@ const String ConfigSchema(const BilgePumpMonitor& obj) {
       "max_consecutive_short_cycles":{"title":"Max Consecutive Short Cycles","description":"Number of consecutive short cycles allowed before health changes to alarm.","type":"number"},
       "primary_stale_warning_days":{"title":"Primary Stale Warning (days)","description":"Days a primary pump can go without running before health changes to warn.","type":"number"},
       "emergency_exercise_warning_days":{"title":"Emergency Exercise Warning (days)","description":"Days an emergency pump can go without running before health changes to warn.","type":"number"},
+      "emergency_alarm_delay_s":{"title":"Emergency Alarm Delay (s)","description":"Seconds (0-30) an emergency pump must run before it raises the running alarm. A shorter run is treated as a test, unless it starts within 24 hours of the previous run.","type":"number"},
       "running_sk_path":{"title":"Running Path","description":"Signal K path used to report whether the pump is currently running.","type":"string"},
       "last_run_time_sk_path":{"title":"Last Run Time Path","description":"Signal K path used to report the most recently completed run duration.","type":"string"},
       "last_idle_time_sk_path":{"title":"Last Idle Time Path","description":"Signal K path used to report the idle time before a run cycle starts.","type":"string"},

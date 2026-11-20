@@ -12,6 +12,7 @@
 
 namespace sensesp {
 class SKMetadata;
+struct SKPathValue;
 }  // namespace sensesp
 
 namespace app {
@@ -82,6 +83,8 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   unsigned long min_idle_time_ms() const;
   int primary_stale_warning_seconds() const;
   int emergency_exercise_warning_seconds() const;
+  unsigned long emergency_alarm_delay_ms() const;
+  bool emergency_alarm_due(unsigned long now_ms) const;
   void update_daily_cycle_boundary(time_t now_seconds);
   void update_health_reference_epoch(time_t now_seconds);
   int day_key_from_time(time_t now_seconds) const;
@@ -110,6 +113,7 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
                            const String& reason, bool audible,
                            time_t now_seconds);
   void emit_incident_alert_resolution(PumpIncidentAlertId alert_id);
+  void handle_incident_alert_update(const sensesp::SKPathValue& update);
   void evaluate();
   void handle_running_start(unsigned long now_ms, time_t now_seconds);
   void handle_running_stop(unsigned long now_ms, time_t now_seconds);
@@ -128,6 +132,7 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   int max_consecutive_short_cycles_;
   float primary_stale_warning_days_;
   float emergency_exercise_warning_days_;
+  float emergency_alarm_delay_s_;
 
   String running_sk_path_;
   String last_run_time_sk_path_;
@@ -138,6 +143,9 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   String average_run_time_sk_path_;
   String average_idle_time_sk_path_;
   String health_notification_sk_path_;
+  // Prefix of this pump's incident alert paths, fixed at begin(): the
+  // listener subscribed there cannot follow a later path change.
+  String incident_alert_prefix_;
 
   bool raw_running_ = false;
   bool logical_running_ = false;
@@ -149,6 +157,11 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
   unsigned long long cumulative_idle_time_ms_ = 0;
   unsigned long completed_cycle_count_ = 0;
   unsigned long idle_sample_count_ = 0;
+  // Emergency pumps: when the previous run ended (since boot), so a short run
+  // counts as a test only when it is isolated (see emergency_alarm_due()).
+  bool emergency_run_ended_ = false;
+  unsigned long emergency_run_end_ms_ = 0;
+  bool emergency_test_run_allowed_ = true;
   String active_health_state_;
   String active_health_message_;
 
@@ -160,6 +173,8 @@ class BilgePumpMonitor : public sensesp::FileSystemSaveable {
     String active_state;
     String active_reason;
     time_t first_epoch = 0;
+    // Message of the last "resolved" warning sent since boot; empty if none.
+    String resolved_message;
   };
 
   std::array<IncidentAlertChannel,
